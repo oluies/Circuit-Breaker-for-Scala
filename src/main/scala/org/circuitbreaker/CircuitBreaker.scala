@@ -15,9 +15,8 @@
  */
 package org.circuitbreaker
 
-import collection.immutable.HashMap
+import scala.collection.immutable.HashMap
 import java.util.concurrent.atomic.{AtomicLong, AtomicReference, AtomicInteger}
-import System._
 
 /**
  * holder companion object for creating and retrieving all
@@ -28,189 +27,109 @@ import System._
  */
 object CircuitBreaker {
 
-  /**
-   * holds instances
-   */
   private var circuitBreaker = HashMap[String, CircuitBreaker]()
 
   /**
-   * factory mathod
+   * factory method
    * creates a new CircuitBreaker with a given name and configuration
-   *
-   * @param name name or id of the new CircuitBreaker
-   * @param config CircuitBreakerConfiguration to configure the new CircuitBreaker
    */
-  def addCircuitBreaker(name: String, config: CircuitBreakerConfiguration): Unit = {
+  def addCircuitBreaker(name: String, config: CircuitBreakerConfiguration): Unit = synchronized {
     circuitBreaker.get(name) match {
-      case None => circuitBreaker += ((name, new CircuitBreakerImpl(config)))
-      case Some(x) => throw new java.lang.IllegalArgumentException("CircuitBreaker " + name + " already configured")
+      case None    => circuitBreaker += ((name, new CircuitBreakerImpl(config)))
+      case Some(_) => throw new IllegalArgumentException("CircuitBreaker " + name + " already configured")
     }
-
   }
 
-  /**
-   * CircuitBreaker retrieve method
-   *
-   * @param name String name or id of the CircuitBreaker
-   * @return CircuitBreaker with name or id name
-   */
-  private[circuitbreaker] def apply(name: String): CircuitBreaker = {
-    circuitBreaker.get(name) match {
-      case Some(x) => x
-      case None => throw new java.lang.IllegalArgumentException("CircuitBreaker " + name + " not configured")
-    }
+  /** Remove a CircuitBreaker from the registry. Primarily useful in tests. */
+  def removeCircuitBreaker(name: String): Unit = synchronized {
+    circuitBreaker -= name
+  }
+
+  /** CircuitBreaker retrieve method */
+  private[circuitbreaker] def apply(name: String): CircuitBreaker = synchronized {
+    circuitBreaker.getOrElse(
+      name,
+      throw new IllegalArgumentException("CircuitBreaker " + name + " not configured")
+    )
   }
 }
 
 /**
  * Basic MixIn for using CircuitBreaker Scope method
- *
- * @author Christopher Schmidt
  */
 trait UsingCircuitBreaker {
-  def withCircuitBreaker[T](name: String)(f: => T): T = {
+  def withCircuitBreaker[T](name: String)(f: => T): T =
     CircuitBreaker(name).invoke(f)
-  }
 }
-
 
 /**
  * simple case class that holds configuration parameter
  *
- * @param timeout timout for trying again
+ * @param timeout timeout for trying again (in milliseconds)
  * @param failureThreshold threshold of errors till breaker will open
- *
- * @author Christopher Schmidt
  */
 case class CircuitBreakerConfiguration(timeout: Long, failureThreshold: Int)
 
-
 /**
  * Interface definition for CircuitBreaker
- *
- * @author Christopher Schmidt
  */
 private[circuitbreaker] trait CircuitBreaker {
-
-  /**
-   * increments and gets the actual failure count
-   *
-   * @return Int failure count
-   */
   var failureCount: Int
-
-  /**
-   * @return Long milliseconds at trip
-   */
   var tripTime: Long
 
-  /**
-   * function that has to be applied in CircuitBreaker scope
-   */
   def invoke[T](f: => T): T
-
-  /**
-   * trip CircuitBreaker, store trip time
-   */
-  def trip
-
-  /**
-   * sets failure count to 0
-   */
-  def resetFailureCount
-
-  /**
-   * set state to Half Open
-   */
-  def attemptReset
-
-  /**
-   * reset CircuitBreaker to configured defaults
-   */
-  def reset
-
-  /**
-   * @return Int configured failure threshold
-   */
+  def trip: Unit
+  def resetFailureCount: Unit
+  def attemptReset: Unit
+  def reset: Unit
   def failureThreshold: Int
-
-  /**
-   * @return Long configured timeout
-   */
   def timeout: Long
 }
-
 
 /**
  * CircuitBreaker base class for all configuration things
  * holds all thread safe (atomic) private members
- *
- * @author Christopher Schmidt
  */
 private[circuitbreaker] abstract class CircuitBreakerBase(config: CircuitBreakerConfiguration) extends CircuitBreaker {
-  /**
-   * base class private members
-   */
-  private var _state = new AtomicReference[States]
 
-  private var _failureThreshold = new AtomicInteger(config.failureThreshold)
+  private val _state = new AtomicReference[States]
+  private val _failureThreshold = new AtomicInteger(config.failureThreshold)
+  private val _timeout = new AtomicLong(config.timeout)
+  private val _failureCount = new AtomicInteger(0)
+  private val _tripTime = new AtomicLong
 
-  private var _timeout = new AtomicLong(config.timeout)
+  protected def state_=(s: States): Unit = _state.set(s)
+  protected def state: States = _state.get
 
-  private var _failureCount = new AtomicInteger(0)
+  def failureThreshold: Int = _failureThreshold.get
+  def timeout: Long = _timeout.get
 
-  private var _tripTime = new AtomicLong
+  def failureCount_=(i: Int): Unit = _failureCount.set(i)
+  def failureCount: Int = _failureCount.incrementAndGet
 
-  /**
-   * access members
-   */
-
-  protected def state_=(s: States) {
-    _state.set(s)
-  }
-
-  protected def state = _state.get
-
-  def failureThreshold = _failureThreshold get
-
-  def timeout = _timeout get
-
-  def failureCount_=(i: Int) {
-    _failureCount.set(i)
-  }
-
-  def failureCount = _failureCount.incrementAndGet
-
-  def tripTime_=(l: Long) {
-    _tripTime.set(l)
-  }
-
-  def tripTime = _tripTime.get
-
+  def tripTime_=(l: Long): Unit = _tripTime.set(l)
+  def tripTime: Long = _tripTime.get
 }
 
 /**
  * CircuitBreaker implementation class for changing states
- *
- * @author Christopher Schmidt
  */
-private[circuitbreaker] class CircuitBreakerImpl(config: CircuitBreakerConfiguration) extends CircuitBreakerBase(config)
-{
+private[circuitbreaker] class CircuitBreakerImpl(config: CircuitBreakerConfiguration) extends CircuitBreakerBase(config) {
   reset
 
-  def reset = {
+  def reset: Unit = {
     resetFailureCount
     state = new ClosedState(this)
   }
 
-  def resetFailureCount =
+  def resetFailureCount: Unit =
     failureCount = 0
 
-  def attemptReset =
+  def attemptReset: Unit =
     state = new HalfOpenState(this)
 
-  def trip = {
-    tripTime = currentTimeMillis
+  def trip: Unit = {
+    tripTime = System.currentTimeMillis
     state = new OpenState(this)
   }
 
@@ -220,12 +139,10 @@ private[circuitbreaker] class CircuitBreakerImpl(config: CircuitBreakerConfigura
       val ret = f
       state.postInvoke
       ret
-    }
-    catch {
-      case e: Throwable => {
+    } catch {
+      case e: Throwable =>
         state.onError(e)
         throw e
-      }
     }
   }
 }

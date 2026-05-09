@@ -15,64 +15,41 @@
  */
 package org.circuitbreaker
 
-import System._
-
 /**
  * CircuitBreaker states base class
- *
- * @author Christopher Schmidt
  */
-private[circuitbreaker] abstract class States(cb: CircuitBreaker) {
-
-  /**
-   * pre invocation method
-   */
-  def preInvoke
-
-  /**
-   * post invocation method
-   */
-  def postInvoke
-
-  /**
-   * called if exception is thrown in applied function
-   */
-  def onError(e: Throwable)
+private[circuitbreaker] abstract class States {
+  def preInvoke: Unit
+  def postInvoke: Unit
+  def onError(e: Throwable): Unit
 }
-
 
 /**
  * CircuitBreaker is closed, normal operation
- *
- * @author Christopher Schmidt
  */
-private[circuitbreaker] class ClosedState(cb: CircuitBreaker) extends States(cb) {
-  def onError(e: Throwable) = {
+private[circuitbreaker] class ClosedState(cb: CircuitBreaker) extends States {
+  def onError(e: Throwable): Unit = {
     val currentCount = cb.failureCount
     val threshold = cb.failureThreshold
     if (currentCount >= threshold)
       cb.trip
   }
 
-  def postInvoke =
-    cb.resetFailureCount
+  def postInvoke: Unit = cb.resetFailureCount
 
-  def preInvoke = null
+  def preInvoke: Unit = ()
 }
-
 
 /**
  * CircuitBreaker is open. Calls are failing fast
- *
- * @author Christopher Schmidt
  */
-private[circuitbreaker] class OpenState(cb: CircuitBreaker) extends States(cb) {
-  def onError(e: Throwable) = null
+private[circuitbreaker] class OpenState(cb: CircuitBreaker) extends States {
+  def onError(e: Throwable): Unit = ()
 
-  def postInvoke = null
+  def postInvoke: Unit = ()
 
-  def preInvoke = {
-    val now = currentTimeMillis
+  def preInvoke: Unit = {
+    val now = System.currentTimeMillis
     val elapsed = now - cb.tripTime
     if (elapsed <= cb.timeout)
       throw new CircuitBreakerOpenException("Circuit Breaker is open; calls are failing fast")
@@ -80,20 +57,16 @@ private[circuitbreaker] class OpenState(cb: CircuitBreaker) extends States(cb) {
   }
 }
 
-
 /**
  * CircuitBreaker is half open. Calls are still failing after timeout
- *
- * @author Christopher Schmidt
  */
-private[circuitbreaker] class HalfOpenState(cb: CircuitBreaker) extends States(cb) {
-  def onError(e: Throwable) = {
+private[circuitbreaker] class HalfOpenState(cb: CircuitBreaker) extends States {
+  def onError(e: Throwable): Unit = {
     cb.trip
-    throw new CircuitBreakerHalfOpenException("Circuit Breaker is half open; calls are still failing after timout", e)
+    throw new CircuitBreakerHalfOpenException("Circuit Breaker is half open; calls are still failing after timeout", e)
   }
 
-  def postInvoke =
-    cb.reset
+  def postInvoke: Unit = cb.reset
 
-  def preInvoke = null
+  def preInvoke: Unit = ()
 }
