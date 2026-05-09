@@ -24,4 +24,13 @@ class Test extends UsingCircuitBreaker {
 }
 </pre>
 
-I will add maven pom and addional test specs (see src/TestCircuitBreaker.scala) later.
+h2. Build & test
+
+Built with sbt against Scala 3. Tests use "MUnit":https://scalameta.org/munit/.
+
+<pre>
+sbt compile
+sbt test
+</pre>
+
+CI runs on GitHub Actions (see @.github/workflows/ci.yml@) against JDK 17 and 21.
